@@ -170,7 +170,9 @@ class Oid implements ProtocolElementInterface
      */
     public function toAsn1() : AbstractType
     {
-        $varBind = Asn1::sequence(Asn1::oid($this->oid));
+        # It's common to represent OIDs with a leading dot. However, this is irrelevant to the ASN.1 BER representation.
+        # This is a convenience to detect and strip a leading dot if used.
+        $varBind = Asn1::sequence(Asn1::oid($this->oid[0] === '.' ? \substr($this->oid, 1) : $this->oid));
 
         if ($this->value === null && $this->status === null) {
             $varBind->addChild(Asn1::null());
@@ -196,7 +198,7 @@ class Oid implements ProtocolElementInterface
      */
     public static function fromAsn1(AbstractType $varBind)
     {
-        if (!($varBind instanceof SequenceType && count($varBind) >= 1)) {
+        if (!($varBind instanceof SequenceType && \count($varBind->getChildren()) >= 1)) {
             throw new ProtocolException('The Oid format is invalid.');
         }
         $oidName = $varBind->getChild(0);

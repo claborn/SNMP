@@ -13,6 +13,10 @@ namespace FreeDSx\Snmp\Module\Privacy;
 use FreeDSx\Snmp\Exception\SnmpEncryptionException;
 use FreeDSx\Snmp\Message\AbstractMessageV3;
 use FreeDSx\Snmp\Message\EngineId;
+use FreeDSx\Snmp\Message\Request\MessageRequestInterface;
+use FreeDSx\Snmp\Message\ScopedPdu;
+use FreeDSx\Snmp\Message\ScopedPduRequest;
+use FreeDSx\Snmp\Message\ScopedPduResponse;
 use FreeDSx\Snmp\Message\Security\UsmSecurityParameters;
 use FreeDSx\Snmp\Module\Authentication\AuthenticationModuleInterface;
 use FreeDSx\Snmp\Protocol\SnmpEncoder;
@@ -42,7 +46,7 @@ trait PrivacyTrait
     /**
      * {@inheritdoc}
      */
-    public function decryptData(AbstractMessageV3 $message, AuthenticationModuleInterface $authMod, string $privPwd)
+    public function decryptData(AbstractMessageV3 $message, AuthenticationModuleInterface $authMod, string $privPwd) : AbstractMessageV3
     {
         /** @var UsmSecurityParameters $usm */
         $usm = $message->getSecurityParameters();
@@ -50,10 +54,10 @@ trait PrivacyTrait
         # 1) If the privParameters field is not an 8-octet OCTET STRING, then
         #    an error indication (decryptionError) is returned to the calling
         #    module.
-        if (strlen($usm->getPrivacyParams()) !== 8) {
+        if (\strlen($usm->getPrivacyParams()) !== 8) {
             throw new SnmpEncryptionException(sprintf(
                 'The privParameters must be 8 octets long, but it is %s.',
-                strlen($usm->getPrivacyParams())
+                \strlen($usm->getPrivacyParams())
             ));
         }
 
@@ -71,7 +75,7 @@ trait PrivacyTrait
 
         # 4) The encryptedPDU is then decrypted (as described in section 8.1.1.3).
         $encryptedPdu = $this->validateEncryptedPdu($message->getEncryptedPdu());
-        $decryptedPdu = openssl_decrypt($encryptedPdu, $this->algoAlias(), $key, OPENSSL_RAW_DATA|OPENSSL_ZERO_PADDING, $iv);
+        $decryptedPdu = \openssl_decrypt($encryptedPdu, $this->algoAlias(), $key, OPENSSL_RAW_DATA|OPENSSL_ZERO_PADDING, $iv);
 
         # 5) If the encryptedPDU cannot be decrypted, then an error indication
         #    (decryptionError) is returned to the calling module.
@@ -79,7 +83,15 @@ trait PrivacyTrait
             throw new SnmpEncryptionException('Unable to decrypt the scopedPdu');
         }
 
-        return $decryptedPdu;
+        $pduFactory = $message instanceof MessageRequestInterface ? ScopedPduRequest::class : ScopedPduResponse::class;
+        try {
+            $pdu = \call_user_func($pduFactory.'::fromAsn1', (new SnmpEncoder())->decode($decryptedPdu));
+        } catch (\Exception|\Throwable $e) {
+            throw new SnmpEncryptionException('Failed to assemble decrypted PDU.', $e->getCode(), $e);
+        }
+        $this->setPduDataInMessage($message, null, $pdu);
+
+        return $message;
     }
 
     /**
@@ -91,7 +103,7 @@ trait PrivacyTrait
         $usm = $message->getSecurityParameters();
 
         # RFC 3414, Section 11.2. Passwords must be at least 8 characters in length
-        if (strlen($password) < 8) {
+        if (\strlen($password) < 8) {
             throw new SnmpEncryptionException('The privacy password must be at least 8 characters long.');
         }
 
@@ -119,14 +131,14 @@ trait PrivacyTrait
         #    [RFC3417] as an OCTET STRING.
         $scopedPdu = $this->validateEncodedPdu((new SnmpEncoder())->encode($message->getScopedPdu()->toAsn1()));
 
-        $encryptedPdu = openssl_encrypt($scopedPdu, $this->algoAlias(), $key, OPENSSL_RAW_DATA, $iv);
+        $encryptedPdu = \openssl_encrypt($scopedPdu, $this->algoAlias(), $key, OPENSSL_RAW_DATA, $iv);
         if ($encryptedPdu === false) {
             throw new SnmpEncryptionException(sprintf(
                 'Unable to encrypt the scopedPdu using %s',
                 $this->algorithm
             ));
         }
-        $message->setEncryptedPdu($encryptedPdu);
+        $this->setPduDataInMessage($message, $encryptedPdu, null, true);
 
         return $message;
     }
@@ -138,8 +150,6 @@ trait PrivacyTrait
      *
      * @param string $cryptKey
      * @param UsmSecurityParameters $usm
-     * @param string $privMech
-     * @param string $authMech
      * @param AuthenticationModuleInterface $authMod
      * @param null|string $salt
      * @return array
@@ -169,7 +179,7 @@ trait PrivacyTrait
         $salt = '';
 
         for ($i = $startAt; $i >= 0; $i -= 8) {
-            $salt  .= chr(($int >> $i) & 0xff);
+            $salt  .= \chr(($int >> $i) & 0xff);
         }
 
         return $salt;
@@ -200,7 +210,7 @@ trait PrivacyTrait
         # key bits.
         # -----------
         # The first step is already done.
-        while (strlen($cryptKey) < $keySize) {
+        while (\strlen($cryptKey) < $keySize) {
             $cryptKey .= $authMod->generateKey($cryptKey, $engineId);
         }
 
@@ -223,13 +233,13 @@ trait PrivacyTrait
      */
     protected function localizeBlumenthal(AuthenticationModuleInterface $authMod, $cryptKey, int $keySize)
     {
-        $c = ceil($keySize / strlen($cryptKey));
+        $c = \ceil($keySize / strlen($cryptKey));
 
         for ($i = 0; $i < $c; $i++) {
             $cryptKey .= $authMod->hash($cryptKey);
         }
 
-        return substr($cryptKey, 0, $keySize);
+        return \substr($cryptKey, 0, $keySize);
     }
 
     /**
@@ -237,10 +247,31 @@ trait PrivacyTrait
      */
     protected function algoAlias() : string
     {
-        if (defined('self::ALIASES') && array_key_exists($this->algorithm, self::ALIASES)) {
+        if (\defined('self::ALIASES') && \array_key_exists($this->algorithm, self::ALIASES)) {
             return self::ALIASES[$this->algorithm];
         }
 
         return $this->algorithm;
+    }
+
+    /**
+     * @param AbstractMessageV3 $message
+     * @param string|null $encryptedData
+     * @param ScopedPdu|null $pdu
+     * @param bool $encOnly
+     */
+    protected function setPduDataInMessage(AbstractMessageV3 $message, $encryptedData, ?ScopedPdu $pdu, bool $encOnly = false) : void
+    {
+        $requestObject = new \ReflectionObject($message);
+
+        if (!$encOnly) {
+            $pduProperty = $requestObject->getProperty('scopedPdu');
+            $pduProperty->setAccessible(true);
+            $pduProperty->setValue($message, $pdu);
+        }
+
+        $encryptedProperty = $requestObject->getProperty('encryptedPdu');
+        $encryptedProperty->setAccessible(true);
+        $encryptedProperty->setValue($message, $encryptedData);
     }
 }

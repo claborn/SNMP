@@ -70,11 +70,11 @@ class AESPrivacyModule implements PrivacyModuleInterface
     public function __construct(string $algorithm, ?int $localBoot = null)
     {
         $this->algorithm = $algorithm;
-        $this->has64BitSupport = is_int(9223372036854775807);
+        $this->has64BitSupport = \is_int(9223372036854775807);
         if ($localBoot === null) {
             if ($this->has64BitSupport) {
                 self::$maxSalt = 9223372036854775807;
-                $this->localBoot = random_int(0, self::$maxSalt);
+                $this->localBoot = \random_int(0, self::$maxSalt);
             }
         } else {
             $this->localBoot = $localBoot;
@@ -84,7 +84,7 @@ class AESPrivacyModule implements PrivacyModuleInterface
     /**
      * {@inheritdoc}
      */
-    public function decryptData(AbstractMessageV3 $message, AuthenticationModuleInterface $authMod, string $privPwd)
+    public function decryptData(AbstractMessageV3 $message, AuthenticationModuleInterface $authMod, string $privPwd) : AbstractMessageV3
     {
         if (!$this->has64BitSupport) {
             throw new SnmpEncryptionException('AES privacy requires 64bit int support.');
@@ -118,17 +118,17 @@ class AESPrivacyModule implements PrivacyModuleInterface
      */
     protected function toKeySaltIV($cryptKey, UsmSecurityParameters $usm, AuthenticationModuleInterface $authMod, $salt = null): array
     {
-        $keySize = self::KEY_SIZE[$this->algoAlias($this->algorithm)];
-        $keyTooShort = (strlen($cryptKey) < $keySize);
+        $keySize = self::KEY_SIZE[$this->algoAlias()];
+        $keyTooShort = (\strlen($cryptKey) < $keySize);
 
-        if ($keyTooShort && substr($this->algorithm, -3) === 'blu') {
+        if ($keyTooShort && \substr($this->algorithm, -3) === 'blu') {
             $cryptKey = $this->localizeBlumenthal($authMod, $cryptKey, $keySize);
         } elseif ($keyTooShort) {
             $cryptKey = $this->localizeReeder($authMod, $cryptKey, $usm->getEngineId(), $keySize);
         }
 
         # RFC 3826, Section 3.1.2.1 / RFC draft-blumenthal-aes-usm-04, Section 3.1.2.1
-        $key = substr($cryptKey, 0, $keySize);
+        $key = \substr($cryptKey, 0, $keySize);
 
         # The 64bit int local boot is the salt
         if ($salt === null) {
